@@ -18,8 +18,8 @@ apt-get install -y --no-install-recommends \
     ca-certificates \
     "$CI_HEADERS_PACKAGE"
 
-CI_KDIR=$(find /usr/src -mindepth 1 -maxdepth 1 -type d -name 'linux-headers-*' | \
-    sort -V | tail -n 1)
+CI_KDIR=$(find /usr/src -mindepth 1 -maxdepth 1 -type d -name 'linux-headers-*' \
+    -exec test -f '{}/include/config/auto.conf' \; -print | sort -V | tail -n 1)
 if [ -z "$CI_KDIR" ] || [ ! -f "$CI_KDIR/Makefile" ]; then
     echo "未找到可用于外部模块构建的内核头文件。" >&2
     exit 1
