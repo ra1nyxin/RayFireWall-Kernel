@@ -53,4 +53,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="release-$(date -u +%Y%m%d-%H%M%S)-$(openssl rand -hex 4)"
-          gh release create "$tag" dist/*.tar.gz --title "$tag" --generate-notes --target "$GITHUB_SHA"
+          gh release create "$tag" dist/*.tar.gz --repo "$GITHUB_REPOSITORY" --title "$tag" --generate-notes --target "$GITHUB_SHA"
