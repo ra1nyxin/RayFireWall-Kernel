@@ -19,20 +19,36 @@ jobs:
         include:
           - name: debian-12
             image: debian:12
+            package_manager: apt
             headers: linux-headers-amd64
           - name: ubuntu-22.04
             image: ubuntu:22.04
+            package_manager: apt
             headers: linux-headers-generic
           - name: ubuntu-24.04
             image: ubuntu:24.04
+            package_manager: apt
             headers: linux-headers-generic
           - name: kali-rolling
             image: kalilinux/kali-rolling:latest
+            package_manager: apt
             headers: linux-headers-amd64
+          - name: fedora-40
+            image: fedora:40
+            package_manager: dnf
+            headers: kernel-devel
+          - name: archlinux
+            image: archlinux:base
+            package_manager: pacman
+            headers: linux-headers
+          - name: amazonlinux-2023
+            image: amazonlinux:2023
+            package_manager: dnf
+            headers: kernel-devel
     steps:
       - uses: actions/checkout@v4
       - name: Build module and CLI
-        run: ./scripts/ci-build.sh '${{ matrix.name }}' '${{ matrix.headers }}'
+        run: ./scripts/ci-build.sh '${{ matrix.name }}' '${{ matrix.package_manager }}' '${{ matrix.headers }}'
       - uses: actions/upload-artifact@v4
         with:
           name: rayfw-${{ matrix.name }}

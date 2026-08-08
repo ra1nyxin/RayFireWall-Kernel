@@ -1,6 +1,6 @@
 # RayFireWall-Kernel
 
-RayFireWall 是面向 Debian 系 Linux 的内核态包过滤防火墙。数据面运行于
+RayFireWall 是面向常见 Linux 发行版的内核态包过滤防火墙。数据面运行于
 Netfilter，用户态通过 Generic Netlink 与内核通信，不依赖 libnl、Python 或图形界面。
 CLI 的帮助、状态、错误和操作结果均为中文，同时保留稳定的英文命令，方便脚本调用。
 
@@ -21,13 +21,14 @@ CLI 的帮助、状态、错误和操作结果均为中文，同时保留稳定�
 
 ## 支持范围
 
-目标系统为 Ubuntu、Debian、Kali Linux，内核版本建议为 5.15 或更高。构建需要与
-当前运行内核完全匹配的头文件。Secure Boot 开启时，自编译模块需要按发行版流程签名，
-否则内核会拒绝加载。
+目标系统包括 Debian、Ubuntu、Kali Linux、Fedora、Arch Linux 与 Amazon Linux，内核
+版本建议为 5.15 或更高。构建需要与当前运行内核完全匹配的头文件。Secure Boot 开启时，
+自编译模块需要按发行版流程签名，否则内核会拒绝加载。
 
-`scripts/install.sh` 会自动通过 APT 安装 `build-essential`、`dkms`、`kmod` 与当前
-运行内核对应的头文件；用户无需预先手动安装这些依赖。手动执行 `make` 时，则要求系统
-已具备编译器和匹配的内核头文件。
+`scripts/install.sh` 会自动识别 APT、DNF/YUM 与 Pacman，并安装编译器、`kmod` 与当前
+运行内核对应的头文件；用户无需预先手动安装依赖。Debian 系会安装并优先使用 DKMS；
+其他发行版若未提供 DKMS，则安全回退为安装当前内核模块。手动执行 `make` 时，系统仍
+需要具备编译器和匹配的内核头文件。
 
 ## 构建
 
