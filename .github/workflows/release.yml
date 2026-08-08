@@ -46,6 +46,9 @@ jobs:
             package_manager: dnf
             headers: kernel-devel
     steps:
+      - name: Prepare Amazon Linux checkout tools
+        if: matrix.name == 'amazonlinux-2023'
+        run: dnf -y install tar gzip git
       - uses: actions/checkout@v4
       - name: Build module and CLI
         run: ./scripts/ci-build.sh '${{ matrix.name }}' '${{ matrix.package_manager }}' '${{ matrix.headers }}'
