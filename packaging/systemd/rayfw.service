@@ -1,0 +1,17 @@
+[Unit]
+Description=RayFireWall rules restore
+Documentation=man:rayfwctl(8)
+After=systemd-modules-load.service network-pre.target
+Before=network.target
+Wants=network-pre.target
+ConditionPathExists=/etc/rayfw/rules.conf
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=/sbin/modprobe rayfw
+ExecStart=/usr/sbin/rayfwctl load /etc/rayfw/rules.conf
+ExecReload=/usr/sbin/rayfwctl load /etc/rayfw/rules.conf
+
+[Install]
+WantedBy=multi-user.target

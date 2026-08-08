@@ -1,0 +1,13 @@
+cli/rayfwctl
+kernel/*.ko
+kernel/*.o
+kernel/*.mod
+kernel/*.mod.c
+kernel/*.order
+kernel/*.symvers
+kernel/.*.cmd
+kernel/.tmp_versions/
+kernel/Module.symvers
+kernel/modules.order
+*.tmp
+dist/

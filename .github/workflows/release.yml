@@ -1,0 +1,56 @@
+name: Build and publish kernel modules
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: debian-12
+            image: debian:12
+            headers: linux-headers-amd64
+          - name: ubuntu-22.04
+            image: ubuntu:22.04
+            headers: linux-headers-generic
+          - name: ubuntu-24.04
+            image: ubuntu:24.04
+            headers: linux-headers-generic
+          - name: kali-rolling
+            image: kalilinux/kali-rolling:latest
+            headers: linux-headers-amd64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build module and CLI
+        run: ./scripts/ci-build.sh '${{ matrix.name }}' '${{ matrix.headers }}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rayfw-${{ matrix.name }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publish random release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="release-$(date -u +%Y%m%d-%H%M%S)-$(openssl rand -hex 4)"
+          gh release create "$tag" dist/*.tar.gz --title "$tag" --generate-notes --target "$GITHUB_SHA"

@@ -1,0 +1,100 @@
+.TH RAYFWCTL 8 "2026-08-08" "RayFireWall 0.1.0" "系统管理命令"
+.SH NAME
+rayfwctl \- RayFireWall 内核防火墙控制器
+.SH SYNOPSIS
+.B rayfwctl
+.RI [ --json ]
+.I command
+.RI [ arguments ]
+.SH DESCRIPTION
+.B rayfwctl
+通过 Generic Netlink 管理当前网络命名空间中的 RayFireWall 规则。
+查询通常不需要特权，修改规则需要 root 或 CAP_NET_ADMIN。
+.SH COMMANDS
+.TP
+.B status
+显示启停状态、内核模块版本、规则数量和默认策略。
+.TP
+.B list
+显示规则、优先级及包/字节计数。配合 --json 可输出 JSON。
+.TP
+.B add OPTIONS
+添加一条规则。必须指定 --chain 和 --action。
+.TP
+.BI delete " ID"
+按 ID 删除规则。
+.TP
+.BI flush " [input|output|forward|all]"
+清空指定链或全部规则。
+.TP
+.BI policy " CHAIN accept|drop"
+设置链的默认策略。
+.TP
+.B enable
+启用过滤。
+.TP
+.B disable
+停用过滤并旁路所有流量，规则仍保留。
+.TP
+.B reset-counters
+清零规则计数器。
+.TP
+.BI save " [PATH]"
+保存配置，默认路径为 /etc/rayfw/rules.conf。
+.TP
+.BI load " [PATH]"
+在内核事务中恢复配置；完整成功后才原子替换活动规则集。
+.TP
+.BI check " [PATH]"
+离线检查配置语法，不要求内核模块已加载。
+.TP
+.BI logs " [-f]"
+通过 journalctl 显示内核日志。
+.SH ADD OPTIONS
+.TP
+.BI --chain " input|output|forward"
+选择规则链。
+.TP
+.BI --action " accept|drop"
+选择匹配后的动作。
+.TP
+.BI --family " any|ipv4|ipv6"
+选择地址族。CIDR 条件会自动推断地址族。
+.TP
+.BI --proto " any|tcp|udp|icmp|icmpv6"
+选择协议。
+.TP
+.BI --src " CIDR"
+匹配源网段。
+.TP
+.BI --dst " CIDR"
+匹配目标网段。
+.TP
+.BI --sport " PORT[-PORT]"
+匹配 TCP 或 UDP 源端口。
+.TP
+.BI --dport " PORT[-PORT]"
+匹配 TCP 或 UDP 目标端口。
+.TP
+.BI --in " IFACE"
+匹配入接口。
+.TP
+.BI --out " IFACE"
+匹配出接口。
+.TP
+.BI --state " STATE[,STATE]"
+匹配 new、established、related、invalid、untracked 连接状态。
+.TP
+.BI --priority " NUMBER"
+设置优先级；数字越小越先匹配，默认 1000。
+.TP
+.B --log
+对匹配事件进行限速内核日志记录。
+.SH FILES
+.TP
+.I /etc/rayfw/rules.conf
+systemd 服务默认恢复的配置文件。
+.SH SEE ALSO
+.BR modprobe (8),
+.BR journalctl (1),
+.BR systemd.service (5)

@@ -1,0 +1,31 @@
+_rayfwctl()
+{
+    local current previous commands chains policies protocols families states
+    COMPREPLY=()
+    current="${COMP_WORDS[COMP_CWORD]}"
+    previous="${COMP_WORDS[COMP_CWORD-1]}"
+    commands="status list add delete flush policy enable disable reset-counters save load check logs help"
+    chains="input output forward"
+    policies="accept drop"
+    protocols="any tcp udp icmp icmpv6"
+    families="any ipv4 ipv6"
+    states="new established related invalid untracked"
+
+    case "$previous" in
+        rayfwctl) COMPREPLY=( $(compgen -W "$commands --json --version --help" -- "$current") ) ;;
+        --chain) COMPREPLY=( $(compgen -W "$chains" -- "$current") ) ;;
+        --action) COMPREPLY=( $(compgen -W "$policies" -- "$current") ) ;;
+        --proto) COMPREPLY=( $(compgen -W "$protocols" -- "$current") ) ;;
+        --family) COMPREPLY=( $(compgen -W "$families" -- "$current") ) ;;
+        --state) COMPREPLY=( $(compgen -W "$states" -- "$current") ) ;;
+        flush) COMPREPLY=( $(compgen -W "$chains all" -- "$current") ) ;;
+        policy) COMPREPLY=( $(compgen -W "$chains" -- "$current") ) ;;
+        input|output|forward) COMPREPLY=( $(compgen -W "$policies" -- "$current") ) ;;
+        *)
+            if [[ " ${COMP_WORDS[*]} " == *" add "* ]]; then
+                COMPREPLY=( $(compgen -W "--chain --action --family --proto --src --dst --sport --dport --in --out --state --priority --log" -- "$current") )
+            fi
+            ;;
+    esac
+}
+complete -F _rayfwctl rayfwctl

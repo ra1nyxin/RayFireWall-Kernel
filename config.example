@@ -1,0 +1,11 @@
+# RayFireWall configuration v1
+# 先允许回环与已建立连接，再按需开放服务，最后设置默认拒绝。
+policy input DROP
+policy output ACCEPT
+policy forward DROP
+add --chain INPUT --action ACCEPT --in lo --priority 10
+add --chain INPUT --action ACCEPT --state established,related --priority 20
+add --chain INPUT --action ACCEPT --proto ICMP --family IPv4 --priority 30
+add --chain INPUT --action ACCEPT --proto ICMPv6 --family IPv6 --priority 30
+add --chain INPUT --action ACCEPT --proto TCP --dport 22 --priority 100
+enable
