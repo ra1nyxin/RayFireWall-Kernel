@@ -14,6 +14,9 @@ OUTPUT_DIR=$4
 VERSION=0.1.0
 PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/rayfw-package.XXXXXX")
+# Arch's makepkg runs as an unprivileged builder; allow it to traverse the
+# temporary parent. The directory is removed by the trap after packaging.
+chmod 0755 "$WORK_DIR"
 
 cleanup() {
     rm -rf "$WORK_DIR"
