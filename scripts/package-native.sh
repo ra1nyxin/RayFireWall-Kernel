@@ -170,7 +170,8 @@ EOF
     fi
     chown -R rayfwbuild:rayfwbuild "$package_dir"
     runuser -u rayfwbuild -- sh -c "cd '$package_dir' && makepkg --cleanbuild --noconfirm"
-    package_file=$(find "$package_dir" -maxdepth 1 -type f -name '*.pkg.tar.*' -print -quit)
+    package_file=$(find "$package_dir" -maxdepth 1 -type f -name '*.pkg.tar.*' \
+        ! -name '*-debug-*' -print -quit)
     if [ -z "$package_file" ]; then
         echo "Arch 包构建未生成产物。" >&2
         exit 1
