@@ -6,14 +6,17 @@
 #include <inttypes.h>
 #include <linux/genetlink.h>
 #include <linux/netlink.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <uapi/rayfw.h>
@@ -31,6 +34,10 @@
 #define RAYFWCTL_VERSION "0.1.0"
 #define NL_BUFFER_SIZE 65536
 #define DEFAULT_CONFIG "/etc/rayfw/rules.conf"
+#define ROLLBACK_DIR "/run/rayfw"
+#define ROLLBACK_MARKER ROLLBACK_DIR "/pending-confirmation"
+#define ROLLBACK_MIN_TIMEOUT 10U
+#define ROLLBACK_MAX_TIMEOUT 3600U
 
 struct nl_client {
 	int fd;
@@ -65,7 +72,9 @@ static void print_help(FILE *out)
 		"  disable | 停用                 临时旁路过滤\n"
 		"  reset-counters | 计数清零      清零所有规则计数\n"
 		"  save | 保存 [文件]             保存当前配置\n"
-		"  load | 加载 [文件]             安全恢复配置\n"
+		"  load | 加载 [--confirm-timeout 秒] [文件]\n"
+		"                                  安全恢复配置；可选超时自动旁路\n"
+		"  confirm | 确认                  确认保留受保护的配置加载\n"
 		"  check | 检查 [文件]            离线检查配置语法\n"
 		"  logs | 日志 [-f]               查看内核匹配日志\n"
 		"  help | 帮助                    显示帮助\n\n"
@@ -84,7 +93,8 @@ static void print_help(FILE *out)
 		"示例:\n"
 		"  rayfwctl add --chain input --action accept --proto tcp --dport 22\n"
 		"  rayfwctl add --chain input --action drop --src 203.0.113.0/24 --log\n"
-		"  rayfwctl policy input drop\n",
+		"  rayfwctl load --confirm-timeout 60 /etc/rayfw/rules.conf\n"
+		"  rayfwctl confirm\n",
 		RAYFWCTL_VERSION);
 }
 
@@ -1065,6 +1075,163 @@ static int command_check(const char *path)
 	return result;
 }
 
+static int write_rollback_marker(const char *state, int flags)
+{
+	int fd;
+	ssize_t written;
+	size_t length = strlen(state);
+
+	fd = open(ROLLBACK_MARKER, flags | O_CLOEXEC, 0600);
+	if (fd < 0)
+		return -errno;
+	if (flock(fd, LOCK_EX) < 0) {
+		int result = -errno;
+
+		close(fd);
+		return result;
+	}
+	written = write(fd, state, length);
+	if (written != (ssize_t)length || fsync(fd)) {
+		int result = written != (ssize_t)length ? -EIO : -errno;
+
+		flock(fd, LOCK_UN);
+		close(fd);
+		return result;
+	}
+	flock(fd, LOCK_UN);
+	close(fd);
+	return 0;
+}
+
+static int create_rollback_marker(const char *token)
+{
+	struct stat status;
+	char state[96];
+	int result;
+
+	if (geteuid() != 0)
+		return -EPERM;
+	if (mkdir(ROLLBACK_DIR, 0700) && errno != EEXIST)
+		return -errno;
+	if (stat(ROLLBACK_DIR, &status))
+		return -errno;
+	if (!S_ISDIR(status.st_mode))
+		return -ENOTDIR;
+	if (snprintf(state, sizeof(state), "pending %s\n", token) >= (int)sizeof(state))
+		return -ENAMETOOLONG;
+	result = write_rollback_marker(state, O_WRONLY | O_CREAT | O_EXCL);
+	return result == -EEXIST ? -EBUSY : result;
+}
+
+static void rollback_watchdog(unsigned int timeout, const char *token)
+{
+	struct nl_client client;
+	char state[96] = {0};
+	char armed_state[96], pending_state[96];
+	unsigned int remaining = timeout;
+	struct stat opened, current;
+	int fd, armed_length, pending_length;
+	ssize_t length;
+	bool owns_marker = false;
+
+	while (remaining)
+		remaining = sleep(remaining);
+	fd = open(ROLLBACK_MARKER, O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
+		_exit(EXIT_SUCCESS);
+	if (flock(fd, LOCK_EX) < 0) {
+		close(fd);
+		_exit(EXIT_FAILURE);
+	}
+	length = read(fd, state, sizeof(state) - 1);
+	armed_length = snprintf(armed_state, sizeof(armed_state), "armed %s\n", token);
+	pending_length = snprintf(pending_state, sizeof(pending_state), "pending %s\n", token);
+	if (armed_length > 0 && armed_length < (int)sizeof(armed_state) &&
+	    pending_length > 0 && pending_length < (int)sizeof(pending_state) &&
+	    !fstat(fd, &opened) && !stat(ROLLBACK_MARKER, &current) &&
+	    opened.st_dev == current.st_dev && opened.st_ino == current.st_ino &&
+	    ((length == armed_length && !memcmp(state, armed_state, (size_t)length)) ||
+	     (length == pending_length && !memcmp(state, pending_state, (size_t)length))))
+		owns_marker = true;
+	if (owns_marker && length == armed_length) {
+		if (!nl_open_client(&client)) {
+			command_enabled(&client, false, true);
+			close(client.fd);
+		}
+	}
+	if (owns_marker)
+		unlink(ROLLBACK_MARKER);
+	flock(fd, LOCK_UN);
+	close(fd);
+	_exit(EXIT_SUCCESS);
+}
+
+static int start_rollback_watchdog(unsigned int timeout, const char *token)
+{
+	int pipefd[2];
+	pid_t pid;
+	char ready;
+	ssize_t received;
+
+	if (pipe(pipefd))
+		return -errno;
+	pid = fork();
+	if (pid < 0) {
+		int result = -errno;
+
+		close(pipefd[0]);
+		close(pipefd[1]);
+		return result;
+	}
+	if (pid == 0) {
+		close(pipefd[0]);
+		signal(SIGHUP, SIG_IGN);
+		if (setsid() < 0) {
+			(void)write(pipefd[1], "0", 1);
+			close(pipefd[1]);
+			_exit(EXIT_FAILURE);
+		}
+		(void)write(pipefd[1], "1", 1);
+		close(pipefd[1]);
+		rollback_watchdog(timeout, token);
+	}
+	close(pipefd[1]);
+	received = read(pipefd[0], &ready, 1);
+	close(pipefd[0]);
+	return received == 1 && ready == '1' ? 0 : -EIO;
+}
+
+static int command_confirm(void)
+{
+	char state[96] = {0};
+	int fd, result = 0;
+	ssize_t length;
+
+	if (geteuid() != 0)
+		return -EPERM;
+	fd = open(ROLLBACK_MARKER, O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
+		return errno == ENOENT ? -ENODATA : -errno;
+	if (flock(fd, LOCK_EX) < 0) {
+		result = -errno;
+		goto out;
+	}
+	length = read(fd, state, sizeof(state) - 1);
+	if (length < 7 || memcmp(state, "armed ", 6) || state[length - 1] != '\n') {
+		result = -EAGAIN;
+		goto unlock;
+	}
+	if (unlink(ROLLBACK_MARKER))
+		result = -errno;
+unlock:
+	flock(fd, LOCK_UN);
+out:
+	close(fd);
+	if (!result)
+		printf("已确认当前配置，自动旁路保护已取消。\n");
+	return result;
+}
+
 static int command_load(struct nl_client *client, const char *path)
 {
 	FILE *file = fopen(path, "r");
@@ -1143,6 +1310,73 @@ out:
 	return result;
 }
 
+static int command_load_with_rollback(struct nl_client *client, const char *path,
+					      unsigned int timeout)
+{
+	struct timespec now;
+	char token[64], state[96];
+	int result;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &now))
+		return -errno;
+	if (snprintf(token, sizeof(token), "%ld-%ld-%ld", (long)getpid(),
+		     (long)now.tv_sec, (long)now.tv_nsec) >= (int)sizeof(token))
+		return -ENAMETOOLONG;
+	result = create_rollback_marker(token);
+	if (result)
+		return result;
+	result = start_rollback_watchdog(timeout, token);
+	if (result) {
+		unlink(ROLLBACK_MARKER);
+		return result;
+	}
+	result = command_load(client, path);
+	if (result) {
+		unlink(ROLLBACK_MARKER);
+		return result;
+	}
+	if (snprintf(state, sizeof(state), "armed %s\n", token) >= (int)sizeof(state)) {
+		unlink(ROLLBACK_MARKER);
+		return -ENAMETOOLONG;
+	}
+	result = write_rollback_marker(state, O_WRONLY | O_TRUNC);
+	if (result) {
+		int disable_result = command_enabled(client, false, true);
+
+		unlink(ROLLBACK_MARKER);
+		return disable_result ? disable_result : result;
+	}
+	printf("配置将在 %u 秒后自动旁路；确认远程连接正常后执行: sudo rayfwctl confirm\n",
+	       timeout);
+	return 0;
+}
+
+static int command_load_args(struct nl_client *client, int argc, char **argv)
+{
+	const char *path = DEFAULT_CONFIG;
+	unsigned int timeout = 0;
+	bool have_path = false;
+	int i;
+
+	for (i = 0; i < argc; i++) {
+		uint32_t parsed;
+
+		if (!strcmp(argv[i], "--confirm-timeout")) {
+			if (++i >= argc || timeout || parse_u32(argv[i], &parsed) ||
+			    parsed < ROLLBACK_MIN_TIMEOUT || parsed > ROLLBACK_MAX_TIMEOUT)
+				return -EINVAL;
+			timeout = parsed;
+		} else if (!have_path && argv[i][0] != '-') {
+			path = argv[i];
+			have_path = true;
+		} else {
+			return -EINVAL;
+		}
+	}
+	return timeout ? command_load_with_rollback(client, path, timeout) :
+		command_load(client, path);
+}
+
 static int command_logs(bool follow)
 {
 	if (follow)
@@ -1171,16 +1405,22 @@ static int dispatch(struct nl_client *client, int argc, char **argv)
 	if (command_is(command, "disable", "停用") && argc == 1) return command_enabled(client, false, false);
 	if (command_is(command, "reset-counters", "计数清零") && argc == 1) return command_reset_counters(client);
 	if (command_is(command, "save", "保存") && argc <= 2) return command_save(client, argc == 2 ? argv[1] : DEFAULT_CONFIG);
-	if (command_is(command, "load", "加载") && argc <= 2) return command_load(client, argc == 2 ? argv[1] : DEFAULT_CONFIG);
+	if (command_is(command, "load", "加载")) return command_load_args(client, argc - 1, argv + 1);
 	return -EINVAL;
 }
 
 static void print_error(int error)
 {
-	if (error == -ENOENT)
+	if (error == -ENODATA)
+		fprintf(stderr, "没有待确认的配置加载。\n");
+	else if (error == -ENOENT)
 		fprintf(stderr, "RayFireWall 内核模块未加载，先运行: sudo modprobe rayfw\n");
 	else if (error == -EPERM || error == -EACCES)
 		fprintf(stderr, "权限不足，修改防火墙需要 root 或 CAP_NET_ADMIN。\n");
+	else if (error == -EBUSY)
+		fprintf(stderr, "已有一项待确认的配置加载，请先确认或等待其自动旁路。\n");
+	else if (error == -EAGAIN)
+		fprintf(stderr, "没有可确认的已加载配置。\n");
 	else if (error == -EINVAL || error == -EPROTONOSUPPORT || error == -EAFNOSUPPORT)
 		fprintf(stderr, "参数无效或选项组合不受支持，可运行 rayfwctl help 查看用法。\n");
 	else
@@ -1214,6 +1454,11 @@ int main(int argc, char **argv)
 	if (command_is(argv[1], "check", "检查")) {
 		if (argc > 3) result = -EINVAL;
 		else result = command_check(argc == 3 ? argv[2] : DEFAULT_CONFIG);
+		if (result) print_error(result);
+		return result ? EXIT_FAILURE : EXIT_SUCCESS;
+	}
+	if (command_is(argv[1], "confirm", "确认")) {
+		result = argc == 2 ? command_confirm() : -EINVAL;
 		if (result) print_error(result);
 		return result ? EXIT_FAILURE : EXIT_SUCCESS;
 	}

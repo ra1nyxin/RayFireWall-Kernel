@@ -55,12 +55,25 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: rayfw-${{ matrix.name }}
-          path: dist/*.tar.gz
+          path: dist/*
+          if-no-files-found: error
+
+  source:
+    name: Build source package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create source package
+        run: ./scripts/package-source.sh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rayfw-source
+          path: dist/rayfw-source.tar.gz
           if-no-files-found: error
 
   release:
     name: Publish random release
-    needs: build
+    needs: [build, source]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -72,4 +85,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="release-$(date -u +%Y%m%d-%H%M%S)-$(openssl rand -hex 4)"
-          gh release create "$tag" dist/*.tar.gz --repo "$GITHUB_REPOSITORY" --title "$tag" --generate-notes --target "$GITHUB_SHA"
+          gh release create "$tag" dist/* --repo "$GITHUB_REPOSITORY" --title "$tag" --generate-notes --target "$GITHUB_SHA"

@@ -17,7 +17,21 @@ CLI 的帮助、状态、错误和操作结果均为中文，同时保留稳定�
 - 原子规则集事务：配置恢复失败不会暴露半成品策略
 - Generic Netlink 管理接口权限检查（修改需要 `CAP_NET_ADMIN`）
 - 中文 CLI、JSON 查询输出、文本持久化、离线配置检查
+- SSH 场景的确认式配置加载，超时未确认自动旁路
 - DKMS 自动重编、systemd 开机恢复和 Bash 补全
+
+## 远程管理连接提示
+
+仅运行 `scripts/install.sh` 不会立即断开 SSH 或其他远程管理连接：模块初始策略为
+ACCEPT，脚本只启用开机恢复服务，并不会当场加载规则文件。需要注意的是，执行
+`rayfwctl load /etc/rayfw/rules.conf` 或机器下次启动后，示例配置会将 INPUT 默认设为
+DROP，且仅放行 TCP 22。若 SSH、面板或其他远控服务使用非 22 端口，请在加载规则前先
+将 `/etc/rayfw/rules.conf` 中的 `--dport 22` 改成实际端口并执行 `sudo rayfwctl check`。建议
+始终保留一个已登录的会话，并准备云厂商控制台或本机控制台以便恢复。
+
+通过 SSH 修改拒绝策略时，可使用确认式加载：`load` 成功后会给出确认期限，若未在期限内
+执行 `confirm`，防火墙会自动旁路，规则仍保留。该模式适合人工远程变更；systemd 恢复和
+自动化脚本继续使用普通 `load`，不会等待确认。
 
 ## 支持范围
 
@@ -56,6 +70,27 @@ sudo rayfwctl status
 sudo ./scripts/uninstall.sh
 ```
 
+## Release 安装包
+
+每次推送会发布两类文件。`rayfw-source.tar.gz` 是完整源码包，适用于任意受支持发行版：
+解压后运行其中的 `sudo ./scripts/install.sh`，它会针对当前运行内核编译模块。各平台的
+`.deb`、`.rpm` 和 `.pkg.tar.*` 文件则包含预编译模块，只能在文件名所示的内核版本与架构
+完全匹配时安装；安装前请先以 `uname -r` 核对。
+
+```bash
+# Debian、Ubuntu、Kali
+sudo apt install ./rayfw-*.deb
+
+# Fedora、Amazon Linux
+sudo dnf install ./rayfw-*.rpm
+
+# Arch Linux
+sudo pacman -U ./rayfw-*.pkg.tar.*
+```
+
+原生包会安装 CLI、模块、systemd 服务和示例配置，但不会立即加载拒绝策略。若当前内核
+没有严格匹配的预编译包，应使用源码包而不是强行安装模块。
+
 ## 新 Debian 云 VPS 上线手册
 
 以下流程假定 VPS 使用 SSH 的 22 端口。若实际端口不同，先把
@@ -76,17 +111,18 @@ sudo ./scripts/install.sh
 
 ```bash
 sudo rayfwctl check /etc/rayfw/rules.conf
-sudo rayfwctl load /etc/rayfw/rules.conf
+sudo rayfwctl load --confirm-timeout 90 /etc/rayfw/rules.conf
 sudo rayfwctl status
 sudo rayfwctl list
 ```
 
-在第二个终端重新建立一次 SSH 连接，确认新会话可用后，再关闭最初保留的会话。确认
-systemd 已启用，以便模块加载后自动恢复同一份配置：
+在第二个终端重新建立一次 SSH 连接，确认新会话可用后执行确认，再关闭最初保留的会话。
+若 90 秒内没有确认，防火墙会自动旁路，避免错误策略长期阻断远程管理。安装脚本已启用
+systemd 服务，以便模块加载后自动恢复同一份配置：
 
 ```bash
-sudo systemctl enable --now rayfw.service
-sudo systemctl status rayfw.service
+sudo rayfwctl confirm
+sudo systemctl is-enabled rayfw.service
 ```
 
 只开放实际使用的服务。例如该 VPS 同时提供 HTTPS 和 UDP WireGuard，可在 SSH 规则

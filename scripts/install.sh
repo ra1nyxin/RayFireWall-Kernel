@@ -6,6 +6,7 @@ PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 SOURCE_DIR="/usr/src/rayfw-$VERSION"
 KERNEL_RELEASE=$(uname -r)
 KERNEL_BUILD_DIR="/lib/modules/$KERNEL_RELEASE/build"
+PACKAGE_FAMILY=
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "请使用 root 运行安装脚本。" >&2
@@ -20,19 +21,47 @@ run_timed() {
     fi
 }
 
+show_remote_access_hint() {
+    if [ -n "${SSH_CONNECTION:-}" ]; then
+        ssh_server_port=${SSH_CONNECTION##* }
+        echo "提示：检测到当前 SSH 会话（服务器端端口：$ssh_server_port）。"
+        echo "安装不会立即加载拒绝策略；加载规则前请确认 /etc/rayfw/rules.conf 已放行该端口。"
+    fi
+}
+
+show_header_help() {
+    echo "未找到当前内核的构建目录: $KERNEL_BUILD_DIR" >&2
+    echo "当前内核需要完全匹配的头文件；更新内核后请先重启到已安装内核再重试。" >&2
+    case "$PACKAGE_FAMILY" in
+        apt)
+            echo "可检查：apt-cache policy linux-headers-$KERNEL_RELEASE" >&2
+            ;;
+        dnf|yum)
+            echo "可检查：$PACKAGE_FAMILY list --showduplicates kernel-devel" >&2
+            ;;
+        pacman)
+            echo "可检查：pacman -Q linux linux-headers" >&2
+            ;;
+    esac
+}
+
 install_dependencies() {
     echo "正在安装构建依赖与内核 $KERNEL_RELEASE 的头文件..."
     if command -v apt-get >/dev/null 2>&1; then
+        PACKAGE_FAMILY=apt
         export DEBIAN_FRONTEND=noninteractive
         run_timed apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
         run_timed apt-get -o DPkg::Lock::Timeout=60 install -y --no-install-recommends \
             build-essential dkms kmod "linux-headers-$KERNEL_RELEASE"
     elif command -v dnf >/dev/null 2>&1; then
+        PACKAGE_FAMILY=dnf
         run_timed dnf -y --setopt=timeout=30 --setopt=retries=3 \
             --setopt=install_weak_deps=False install gcc make kmod "kernel-devel-$KERNEL_RELEASE"
     elif command -v yum >/dev/null 2>&1; then
+        PACKAGE_FAMILY=yum
         run_timed yum -y --setopt=timeout=30 install gcc make kmod "kernel-devel-$KERNEL_RELEASE"
     elif command -v pacman >/dev/null 2>&1; then
+        PACKAGE_FAMILY=pacman
         case "$KERNEL_RELEASE" in
             *-lts*) headers_package=linux-lts-headers ;;
             *-zen*) headers_package=linux-zen-headers ;;
@@ -46,10 +75,13 @@ install_dependencies() {
     fi
 }
 
-install_dependencies
+show_remote_access_hint
+if ! install_dependencies; then
+    echo "依赖安装未完成，请检查软件源、网络连接和当前内核对应的软件包。" >&2
+    exit 1
+fi
 if [ ! -f "$KERNEL_BUILD_DIR/Makefile" ]; then
-    echo "未找到当前内核的构建目录: $KERNEL_BUILD_DIR" >&2
-    echo "请安装与 uname -r 完全匹配的内核头文件后重新运行。" >&2
+    show_header_help
     exit 1
 fi
 

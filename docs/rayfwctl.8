@@ -42,8 +42,18 @@ rayfwctl \- RayFireWall 内核防火墙控制器
 .BI save " [PATH]"
 保存配置，默认路径为 /etc/rayfw/rules.conf。
 .TP
-.BI load " [PATH]"
-在内核事务中恢复配置；完整成功后才原子替换活动规则集。
+.BI load " [--confirm-timeout SECONDS] [PATH]"
+在内核事务中恢复配置；完整成功后才原子替换活动规则集。指定
+.B --confirm-timeout
+时，控制器会在成功加载后启动独立计时器；如果在指定秒数内没有执行
+.BR confirm ，
+计时器会停用过滤以恢复网络连通性。超时范围为 10 至 3600 秒，适合通过 SSH
+变更拒绝策略时使用。未指定该选项时保持通常的持久加载行为，供 systemd 和自动化使用。
+.TP
+.B confirm
+确认保留带
+.B --confirm-timeout
+加载的配置，并取消自动旁路计时器。需要 root 权限。
 .TP
 .BI check " [PATH]"
 离线检查配置语法，不要求内核模块已加载。
